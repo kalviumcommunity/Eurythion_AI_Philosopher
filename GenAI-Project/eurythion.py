@@ -6,9 +6,14 @@ from openai import OpenAI
 # Load API Key (from .env file)
 # -------------------------------
 load_dotenv()
+api_key = os.getenv("OPENROUTER_API_KEY")
+
+if not api_key:
+    raise ValueError("❌ OPENROUTER_API_KEY not found in .env file")
+
 client = OpenAI(
     base_url="https://openrouter.ai/api/v1",
-    api_key=os.getenv("OPENROUTER_API_KEY"),
+    api_key=api_key,
 )
 
 # -------------------------------
@@ -19,78 +24,67 @@ You are the Light voice:
 - Optimistic, supportive, kind, and encouraging.
 - Always give hopeful and inspiring answers.
 - Respond in a way that makes the user feel uplifted and motivated.
-
-# Zero-shot mode:
-If no examples are given, infer the best optimistic and supportive response.
-
-# One-shot mode:
-If one example is provided, learn the style and mimic it in future answers.
-
-Example (one-shot):
-User: "I failed my exam."
-Light: "That’s okay! Every failure is just a stepping stone toward success. You’ll do even better next time."
-
-# Multi-shot mode:
-If multiple examples are provided, maintain consistency in tone and style.
-
-Examples (multi-shot):
-User: "I lost my job."
-Light: "This might feel tough now, but it’s an opportunity to find something even better. New doors will open."
-User: "I feel lonely."
-Light: "You are stronger than you realize. Even in loneliness, you can discover yourself and connect with people who truly value you."
+- Always end with the marker: <<END>>
 """
-
 
 DARK_SYSTEM = """
 You are the Dark voice:
 - Blunt, realistic, brutally honest, sometimes harsh.
 - Always reveal uncomfortable truths, even if it hurts.
 - Cut through illusions and avoid sugarcoating.
-
-# Zero-shot mode:
-If no examples are given, directly deliver a raw and unfiltered response.
-
-# One-shot mode:
-If one example is provided, learn the tone and mimic it in future answers.
-
-Example (one-shot):
-User: "I failed my exam."
-Dark: "You failed because you didn’t prepare enough. Unless you change your habits, it will keep happening."
-
-# Multi-shot mode:
-If multiple examples are provided, maintain consistency in the harsh, truthful tone.
-
-Examples (multi-shot):
-User: "I lost my job."
-Dark: "Maybe you weren’t as valuable as you thought. Use this as a wake-up call to improve your skills."
-User: "I feel lonely."
-Dark: "People don’t stick around unless you give them a reason to. Fix yourself before blaming others."
+- Always end with the marker: <<END>>
 """
+
+# -------------------------------
+# Dynamic Prompting
+# -------------------------------
+def build_dynamic_prompt(base_prompt: str, user_input: str) -> str:
+    """Enhance system prompt dynamically based on user input context"""
+    dynamic_addition = ""
+
+    if any(word in user_input.lower() for word in ["sad", "depressed", "lonely", "lost"]):
+        dynamic_addition = "\n[Dynamic]: The user seems emotionally vulnerable. Be extra thoughtful and empathetic."
+    elif any(word in user_input.lower() for word in ["angry", "frustrated", "annoyed"]):
+        dynamic_addition = "\n[Dynamic]: The user is upset. Respond calmly, with clear reasoning."
+    elif any(word in user_input.lower() for word in ["happy", "excited", "grateful"]):
+        dynamic_addition = "\n[Dynamic]: The user is in a good mood. Match their energy and positivity."
+    else:
+        dynamic_addition = "\n[Dynamic]: No special emotion detected. Respond normally."
+
+    return base_prompt + dynamic_addition
 
 # -------------------------------
 # Dual Response Generator
 # -------------------------------
-def generate_response(user_input, temperature=0.7, max_tokens=300):
+def generate_response(user_input, temperature=0.7, top_p=0.9, max_tokens=300):
     def call_openrouter(messages):
         response = client.chat.completions.create(
-            model="openai/gpt-4o-mini",  # ⚡ You can swap models here
+            model="openai/gpt-4o-mini",  # ⚡ swap models here
             messages=messages,
             temperature=temperature,
             max_tokens=max_tokens,
-            top_p=0.9,
+            top_p=top_p,  # ✅ Configurable
             frequency_penalty=0.2,
             presence_penalty=0.2,
+            stop=["<<END>>"],  # ✅ Stop sequence
         )
-        return response.choices[0].message.content.strip()
 
-    # Build Light + Dark messages system user prompt?
+        # ✅ Log token usage
+        usage = response.usage
+        print(f"🔎 Token usage → Prompt: {usage.prompt_tokens}, "
+              f"Completion: {usage.completion_tokens}, "
+              f"Total: {usage.total_tokens}")
+
+        return response.choices[0].message.content.strip() + " <<END>>"
+
+    # Build Light + Dark messages with dynamic system prompt
     light_messages = [
-        {"role": "system", "content": LIGHT_SYSTEM},
-        {"role": "user", "content": user_input}
+        {"role": "system", "content": build_dynamic_prompt(LIGHT_SYSTEM, user_input)},
+        {"role": "user", "content": user_input},
     ]
     dark_messages = [
-        {"role": "system", "content": DARK_SYSTEM},
-        {"role": "user", "content": user_input}
+        {"role": "system", "content": build_dynamic_prompt(DARK_SYSTEM, user_input)},
+        {"role": "user", "content": user_input},
     ]
 
     # Query both personalities
@@ -104,14 +98,15 @@ def generate_response(user_input, temperature=0.7, max_tokens=300):
 # -------------------------------
 def main():
     print("🌗 Welcome to Eurythion CLI — Dual-Personality AI\n")
-    print("Type 'exit' to quit.")
+    print("Type 'exit' or 'quit' to leave.")
     while True:
-        user_input = input("\n❓ You: ")
+        user_input = input("\n❓ You: ").strip()
         if user_input.lower() in ["exit", "quit"]:
+            print("👋 Goodbye!")
             break
 
         print("\n✨ Generating dual responses...\n")
-        reply = generate_response(user_input, temperature=0.8)
+        reply = generate_response(user_input, temperature=0.8, top_p=0.85)  # ✅ Example
         print(reply)
 
 if __name__ == "__main__":
